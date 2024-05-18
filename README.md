@@ -1,2 +1,2 @@
 # RoboML_Group_Projects
-Group projects for course Machine Learning for Robotics
+Group projects for the course Machine Learning for Robotics.

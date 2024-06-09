@@ -168,8 +168,8 @@ class PutCubeIntoBinEnv(BaseEnv):
             # init the cube in the first 1/4 zone (so that it doesn't collide the bin)
             xyz = torch.zeros((b, 3))
             # print(f"xyz.shape is {xyz.shape, xyz[..., 0].shape, (torch.rand((b, 1)) * 0.1 - 0.2).shape}")
-            xyz[..., 0] = (torch.rand((b, 1)) * 0.1 - 0.2)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
-            xyz[..., 1] = (torch.rand((b, 1)) * 0.4 - 0.2)[..., 0] # spanning all possible ys
+            xyz[..., 0] = (torch.rand((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
+            xyz[..., 1] = (torch.rand((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
             xyz[..., 2] = self.cube_half_size # on the table
             q = [1, 0, 0, 0]
             obj_pose = Pose.create_from_pq(p=xyz, q=q)
@@ -178,7 +178,7 @@ class PutCubeIntoBinEnv(BaseEnv):
             # init the bin in the last 1/2 zone (so that it doesn't collide the cube)
             pos = torch.zeros((b, 3))
             pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
-            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.4 - 0.2 # spanning all possible ys
+            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
             q = [1, 0, 0, 0]
             bin_pose = Pose.create_from_pq(p=pos, q=q)
@@ -273,12 +273,12 @@ class PutCubeIntoBinEnv(BaseEnv):
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
 
-#
-#if __name__ == "__main__":
-#    env = gym.make(id="myenv-v1", render_mode="sensors")
-#    env.reset()
-#    while True:
-#    	env.render_human()
+
+if __name__ == "__main__":
+    env = gym.make(id="myenv-v1", render_mode="sensors")
+    env.reset()
+    while True:
+    	env.render_human()
     #img = env.render()
     #img = np.squeeze(img)
     #plt.imshow(img)

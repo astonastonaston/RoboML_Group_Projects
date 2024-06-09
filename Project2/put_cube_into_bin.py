@@ -240,7 +240,7 @@ class PutCubeIntoBinEnv(BaseEnv):
 
         # reaching the bin top reward (use the xy distance / angle approx pi/2 rewards)
         obj_to_goal_diff = self.obj.pose.p - self.goal_site.pose.p
-        obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2])
+        obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2], axis=1)
         move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
         # print(f"top moving rw {move_top_reward * is_grasped}")
         reward += move_top_reward * is_grasped

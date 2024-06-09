@@ -55,7 +55,7 @@ class PutCubeIntoBinEnv(BaseEnv):
     # set some commonly used values
     goal_radius = 0.01
     cube_half_size = 0.02
-    side_half_size = cube_half_size/4
+    side_half_size = cube_half_size/8
     block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
         
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
@@ -145,16 +145,31 @@ class PutCubeIntoBinEnv(BaseEnv):
             name="cube",
             body_type="dynamic",
         )
+        # self.obj = actors.build_sphere(
+        #     self.scene,
+        #     radius=self.cube_half_size,
+        #     color=np.array([12, 42, 160, 255]) / 255,
+        #     name="sphere",
+        #     body_type="dynamic",
+        # )
 
-        self.goal_site = actors.build_sphere(
+        self.goal_site = actors.build_cube(
             self.scene,
-            radius=self.cube_half_size,
+            half_size=self.cube_half_size,
             color=[0, 1, 0, 1],
             name="goal_site",
             body_type="kinematic",
             add_collision=False,
         )
         
+        # self.goal_site = actors.build_sphere(
+        #     self.scene,
+        #     radius=self.cube_half_size,
+        #     color=[0, 1, 0, 1],
+        #     name="goal_site",
+        #     body_type="kinematic",
+        #     add_collision=False,
+        # )
         self.bin = self._build_bin(self.cube_half_size)
 
 
@@ -240,20 +255,34 @@ class PutCubeIntoBinEnv(BaseEnv):
 
         # reaching the bin top reward (use the xy distance / angle approx pi/2 rewards)
         obj_to_goal_diff = self.obj.pose.p - self.goal_site.pose.p
+        obj_to_goal_q_diff = self.obj.pose.q - self.goal_site.pose.q
         obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2], axis=1)
-        move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
+        obj_to_goal_dist_q = torch.linalg.norm(obj_to_goal_q_diff, axis=1)
+        # move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
         # print(f"top moving rw {move_top_reward * is_grasped}")
-        reward += move_top_reward * is_grasped
-        
-        # obj_to_goal_dist_xyz = torch.linalg.norm(obj_to_goal_diff)
-        # cosine_diff_z = torch.dot(obj_to_goal_diff, torch.tensor([0, 0, 1])) / obj_to_goal_dist_xyz
-        # move_top_reward = cosine_diff_z
         # reward += move_top_reward * is_grasped
         
+        obj_to_goal_dist_xyz = torch.linalg.norm(obj_to_goal_diff, axis=1)
+        b, v = obj_to_goal_diff.shape
+        # print(obj_to_goal_diff.shape)
+        z_unit = torch.tensor([[0, 0, 1]]*b, device=torch.device('cuda:0')).view(b, v, 1)
+        # print(z_unit.shape)
+        # print(obj_to_goal_dist_xyz.shape)
+        cosine_diff_z = torch.bmm(obj_to_goal_diff.view(b, 1, v).float(), z_unit.float()).view(b) / obj_to_goal_dist_xyz
+        # print(cosine_diff_z.shape)
+        # print(is_grasped.shape)
+        # cosine_diff_z.view(8, 1)
+        move_top_reward = cosine_diff_z # theta approaching 90 degrees
+        move_top_reward = move_top_reward + 1 - torch.tanh(5 * obj_to_goal_dist_xy) # get closed to the bin
+        pose_align_reward = obj_to_goal_dist_q
+        # print(move_top_reward.shape, is_grasped.view(8, 1).shape, move_top_reward * is_grasped.view(8, 1), reward.shape)
+        reward += ((move_top_reward + pose_align_reward) * is_grasped)
+        
         # release cube reward (TODO)
-        is_cube_on_top = (obj_to_goal_dist_xy < 1e-9)
+        is_cube_on_top = ((obj_to_goal_dist_xy < 1e-9).logical_and(obj_to_goal_dist_q < 1e-9))
         is_released = torch.logical_not(is_grasped)
         # print(f"cube top rw {is_cube_on_top * is_released * 2}") 
+        # print(f"cube top rw {(is_cube_on_top * is_released * 2).shape}") 
         reward += is_cube_on_top * is_released * 2
         
         # static end state keeping reward

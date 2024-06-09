@@ -56,7 +56,7 @@ class PutCubeIntoBinEnv(BaseEnv):
     goal_radius = 0.01
     cube_half_size = 0.02
     side_half_size = cube_half_size/8
-    block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
+    block_half_size = [side_half_size, 2*side_half_size+4*cube_half_size, 2*side_half_size+4*cube_half_size] # the block of the bin
         
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         # specifying robot_uids="panda" as the default means gym.make("PushCube-v1") will default to using the panda arm.
@@ -138,20 +138,20 @@ class PutCubeIntoBinEnv(BaseEnv):
         self.table_scene.build()
 
         # we specify the body_type to be "dynamic" as it should be able to move when touched by other objects / the robot
-        self.obj = actors.build_cube(
-            self.scene,
-            half_size=self.cube_half_size,
-            color=np.array([12, 42, 160, 255]) / 255,
-            name="cube",
-            body_type="dynamic",
-        )
-        # self.obj = actors.build_sphere(
+        # self.obj = actors.build_cube(
         #     self.scene,
-        #     radius=self.cube_half_size,
+        #     half_size=self.cube_half_size,
         #     color=np.array([12, 42, 160, 255]) / 255,
-        #     name="sphere",
+        #     name="cube",
         #     body_type="dynamic",
         # )
+        self.obj = actors.build_sphere(
+            self.scene,
+            radius=self.cube_half_size,
+            color=np.array([12, 42, 160, 255]) / 255,
+            name="sphere",
+            body_type="dynamic",
+        )
 
         self.goal_site = actors.build_cube(
             self.scene,
@@ -183,8 +183,8 @@ class PutCubeIntoBinEnv(BaseEnv):
             # init the cube in the first 1/4 zone (so that it doesn't collide the bin)
             xyz = torch.zeros((b, 3))
             # print(f"xyz.shape is {xyz.shape, xyz[..., 0].shape, (torch.rand((b, 1)) * 0.1 - 0.2).shape}")
-            xyz[..., 0] = (torch.rand((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
-            xyz[..., 1] = (torch.rand((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
+            xyz[..., 0] = (torch.rand((b, 1)) * 0.1 - 0.2)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
+            xyz[..., 1] = (torch.rand((b, 1)) * 0.4 - 0.2)[..., 0] # spanning all possible ys
             xyz[..., 2] = self.cube_half_size # on the table
             q = [1, 0, 0, 0]
             obj_pose = Pose.create_from_pq(p=xyz, q=q)
@@ -192,8 +192,8 @@ class PutCubeIntoBinEnv(BaseEnv):
 
             # init the bin in the last 1/2 zone (so that it doesn't collide the cube)
             pos = torch.zeros((b, 3))
-            pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
-            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
+            pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 + 0.1 # the last 1/2 zone of x ([0, 0.1])
+            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.4 - 0.2 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
             q = [1, 0, 0, 0]
             bin_pose = Pose.create_from_pq(p=pos, q=q)
@@ -255,11 +255,11 @@ class PutCubeIntoBinEnv(BaseEnv):
 
         # reaching the bin top reward (use the xy distance / angle approx pi/2 rewards)
         obj_to_goal_diff = self.obj.pose.p - self.goal_site.pose.p
-        obj_to_goal_q_diff = self.obj.pose.q - self.goal_site.pose.q
+        # obj_to_goal_q_diff = self.obj.pose.q - self.goal_site.pose.q
         obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2], axis=1)
-        obj_to_goal_dist_q = torch.linalg.norm(obj_to_goal_q_diff, axis=1)
-        # move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
+        # obj_to_goal_dist_q = torch.linalg.norm(obj_to_goal_q_diff, axis=1)
         # print(f"top moving rw {move_top_reward * is_grasped}")
+        # move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
         # reward += move_top_reward * is_grasped
         
         obj_to_goal_dist_xyz = torch.linalg.norm(obj_to_goal_diff, axis=1)
@@ -273,13 +273,15 @@ class PutCubeIntoBinEnv(BaseEnv):
         # print(is_grasped.shape)
         # cosine_diff_z.view(8, 1)
         move_top_reward = cosine_diff_z # theta approaching 90 degrees
-        move_top_reward = move_top_reward + 1 - torch.tanh(5 * obj_to_goal_dist_xy) # get closed to the bin
-        pose_align_reward = obj_to_goal_dist_q
+        move_top_reward = move_top_reward + 1 - torch.tanh(5 * obj_to_goal_dist_xyz) # get closed to the bin
+        # pose_align_reward = obj_to_goal_dist_q
         # print(move_top_reward.shape, is_grasped.view(8, 1).shape, move_top_reward * is_grasped.view(8, 1), reward.shape)
-        reward += ((move_top_reward + pose_align_reward) * is_grasped)
+        reward += move_top_reward * is_grasped
+        # reward += ((move_top_reward + pose_align_reward) * is_grasped)
         
         # release cube reward (TODO)
-        is_cube_on_top = ((obj_to_goal_dist_xy < 1e-9).logical_and(obj_to_goal_dist_q < 1e-9))
+        is_cube_on_top = (obj_to_goal_dist_xyz < 1e-9)
+        # is_cube_on_top = ((obj_to_goal_dist_xy < 1e-9).logical_and(obj_to_goal_dist_q < 1e-9))
         is_released = torch.logical_not(is_grasped)
         # print(f"cube top rw {is_cube_on_top * is_released * 2}") 
         # print(f"cube top rw {(is_cube_on_top * is_released * 2).shape}") 

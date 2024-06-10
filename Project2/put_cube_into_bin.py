@@ -56,7 +56,7 @@ class PutCubeIntoBinEnv(BaseEnv):
     goal_radius = 0.01
     cube_half_size = 0.02
     side_half_size = cube_half_size/8
-    block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
+    block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the building block of the bin
         
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         # specifying robot_uids="panda" as the default means gym.make("PushCube-v1") will default to using the panda arm.
@@ -239,7 +239,41 @@ class PutCubeIntoBinEnv(BaseEnv):
             )
         return obs
 
-    def compute_dense_reward(self, obs: Any, action: Array, info: Dict):
+    def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+        # reaching reward
+        cube_to_tcp_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.obj.pose.p, axis=1)
+        reward = 2 * (1 - torch.tanh(5 * cube_to_tcp_dist))
+
+        # grasp and reach reward 
+        bin_top_pos_p = self.goal_site.pose.p.clone()
+        bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + block_half_size[1]*2
+        bin_top_pos_q = self.goal_site.pose.q
+        cube_to_bin_top_dist = torch.linalg.norm(bin_top_pos_q - self.obj.pose.q, axis=1) + torch.linalg.norm(bin_top_pos_p - self.obj.pose.p, axis=1) # TODO: do min-of-N loss for q
+        place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_dist)
+
+        reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
+
+        # ungrasp and static reward
+        gripper_width = (self.agent.robot.get_qlimits()[0, -1, 1] * 2).to(
+            self.device
+        )  # NOTE: hard-coded with panda
+        ungrasp_reward = (
+            torch.sum(self.agent.robot.get_qpos()[:, -2:], axis=1) / gripper_width
+        )
+        ungrasp_reward[~info["is_grasped"]] = 1.0
+        static_reward = 1 - torch.tanh(
+            5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
+        )
+        reward[info["is_obj_placed"]] = (
+            6 + (ungrasp_reward + static_reward) / 2.0
+        )[info["is_obj_placed"]]
+        
+        # success reward
+        reward[info["success"]] = 8
+
+        return reward
+
+    def __compute_dense_reward(self, obs: Any, action: Array, info: Dict):
         # reaching object reward
         tcp_to_obj_dist = torch.linalg.norm(
             self.obj.pose.p - self.agent.tcp.pose.p, axis=1

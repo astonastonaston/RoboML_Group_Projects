@@ -53,7 +53,7 @@ class PutSphereIntoBinEnv(BaseEnv):
     agent: Union[Panda, Xmate3Robotiq, Fetch]
 
     # set some commonly used values
-    goal_radius = 0.01
+    goal_radius = 0.005
     cube_half_size = 0.02
     side_half_size = cube_half_size/8
     block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
@@ -240,13 +240,14 @@ class PutSphereIntoBinEnv(BaseEnv):
         return obs
 
     def compute_dense_reward(self, obs: Any, action: Array, info: Dict):
+        reward = 0
         # reaching object reward
         tcp_to_obj_dist = torch.linalg.norm(
             self.obj.pose.p - self.agent.tcp.pose.p, axis=1
         )
         reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-        # print(f"reaching rw {reaching_reward}")
-        reward = reaching_reward
+        # print(f"reaching rw {torch.tanh(5 * tcp_to_obj_dist), reaching_reward}")
+        reward += reaching_reward
 
         # grasping reward
         is_grasped = info["is_grasped"]
@@ -267,8 +268,14 @@ class PutSphereIntoBinEnv(BaseEnv):
         z_unit = torch.tensor([[0, 0, 1]]*b, device=torch.device('cuda:0')).view(b, v, 1)
         # print(z_unit.shape)
         # print(obj_to_goal_dist_xyz.shape)
-        cosine_diff_z = torch.bmm(obj_to_goal_diff.view(b, 1, v).float(), z_unit.float()).view(b) / obj_to_goal_dist_xyz
+        dot_z_unit = torch.bmm(obj_to_goal_diff.view(b, 1, v).float(), z_unit.float()).view(b)
+        cosine_diff_z = dot_z_unit / obj_to_goal_dist_xyz
+        if (torch.sum(torch.isnan(cosine_diff_z)) > 0):
+          print("find nan!")
+          print(self.obj.pose.p, self.goal_site.pose.p, obj_to_goal_dist_xy, obj_to_goal_dist_xyz)
+          print(dot_z_unit, obj_to_goal_dist_xyz)
         cosine_diff_z[torch.isnan(cosine_diff_z)] = 1
+          
         # print(cosine_diff_z.shape)
         # print(is_grasped.shape)
         # cosine_diff_z.view(8, 1)
@@ -302,13 +309,15 @@ class PutSphereIntoBinEnv(BaseEnv):
         
         if torch.any(is_released) and torch.any(is_cube_on_top):
           print("released!")
-          print(f"reaching rw {reaching_reward}")
-          print(f"grasping rw {is_grasped}")
-          print(f"move top rw {move_top_reward * is_grasped}") 
-          print(f"is cube on top {cosine_diff_z, is_cube_on_top}") 
-          print(f"cube top release rw {is_cube_on_top * is_released}") 
-          print(f"static robot rw {static_reward * info['is_obj_placed']}")
-
+          print(f"distance {obj_to_goal_diff[is_released*is_cube_on_top]}")
+          print(f"reaching rw {reaching_reward[is_released*is_cube_on_top]}")
+          print(f"grasping rw {is_grasped[is_released*is_cube_on_top]}")
+          print(f"move top rw {(move_top_reward * is_grasped)[is_released*is_cube_on_top]}") 
+          print(f"is cube on top {cosine_diff_z[is_released*is_cube_on_top], is_cube_on_top[is_released*is_cube_on_top]}") 
+          print(f"cube top release rw {(is_cube_on_top * is_released)[is_released*is_cube_on_top]}") 
+          print(f"static robot rw {(static_reward * info['is_obj_placed'])[is_released*is_cube_on_top]}")
+          print(f"total reward {reward[is_released*is_cube_on_top]}")
+          print(f"success {info['success'][is_released*is_cube_on_top]}")
         # success reward
         reward[info["success"]] = 9
         return reward
@@ -329,5 +338,6 @@ if __name__ == "__main__":
     #img = np.squeeze(img)
     #plt.imshow(img)
     #plt.show()
+
 
 

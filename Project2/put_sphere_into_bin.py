@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 
 @register_env("myenv-v1", max_episode_steps=50)
-class PutCubeIntoBinEnv(BaseEnv):
+class PutSphereIntoBinEnv(BaseEnv):
     """
     Task Description
     ----------------
@@ -259,7 +259,6 @@ class PutCubeIntoBinEnv(BaseEnv):
         obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2], axis=1)
         # obj_to_goal_dist_q = torch.linalg.norm(obj_to_goal_q_diff, axis=1)
         # move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
-        # print(f"top moving rw {move_top_reward * is_grasped}")
         # reward += move_top_reward * is_grasped
         
         obj_to_goal_dist_xyz = torch.linalg.norm(obj_to_goal_diff, axis=1)
@@ -281,29 +280,42 @@ class PutCubeIntoBinEnv(BaseEnv):
         # print(f"move top rw {move_top_reward * is_grasped}") 
         reward += (move_top_reward * is_grasped)
         
-        # release cube reward (TODO)
-        is_cube_on_top = ((1-cosine_diff_z) < 1e-9)
-        reward[is_cube_on_top] = 4 # if the cube is on the top, then previous rewards no more matter
+        # reset reward to a large value so long as the cube is above the bin
+        is_cube_on_top = ((1-cosine_diff_z) < 0.03)
+        reward[is_cube_on_top] = 5 # if the cube is on the top, then previous rewards no more matter
         # is_cube_on_top = ((obj_to_goal_dist_xy < 1e-9).logical_and(obj_to_goal_dist_q < 1e-9))
+        
+        # release cube reward (TODO)
         is_released = torch.logical_not(is_grasped)
+
+        # print(f"is cube on top {cosine_diff_z, is_cube_on_top}") 
         # print(f"cube top release rw {is_cube_on_top * is_released}") 
         # print(f"cube top rw {(is_cube_on_top * is_released * 2).shape}") 
-        reward += is_cube_on_top * is_released
+        reward += is_cube_on_top * is_released * 2
         
         # agent static end state keeping reward
         static_reward = 1 - torch.tanh(
             5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
         )
-        # print(f"static robot rw {static_reward * info['is_obj_placed']}")
-        reward += is_cube_on_top * static_reward * info["is_obj_placed"]
+        # print(f"static robot rw {is_cube_on_top * static_reward * info['is_obj_placed']}")
+        reward += static_reward * info["is_obj_placed"]
         
+        if torch.any(is_released) and torch.any(is_cube_on_top):
+          print("released!")
+          print(f"reaching rw {reaching_reward}")
+          print(f"grasping rw {is_grasped}")
+          print(f"move top rw {move_top_reward * is_grasped}") 
+          print(f"is cube on top {cosine_diff_z, is_cube_on_top}") 
+          print(f"cube top release rw {is_cube_on_top * is_released}") 
+          print(f"static robot rw {static_reward * info['is_obj_placed']}")
+
         # success reward
-        reward[info["success"]] = 7
+        reward[info["success"]] = 9
         return reward
 
     def compute_normalized_dense_reward(self, obs: Any, action: Array, info: Dict):
         # this should be equal to compute_dense_reward / max possible reward
-        max_reward = 7.0
+        max_reward = 9.0
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
 
@@ -317,4 +329,5 @@ if __name__ == "__main__":
     #img = np.squeeze(img)
     #plt.imshow(img)
     #plt.show()
+
 

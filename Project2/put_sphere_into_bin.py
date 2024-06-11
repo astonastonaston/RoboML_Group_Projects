@@ -53,10 +53,11 @@ class PutSphereIntoBinEnv(BaseEnv):
     agent: Union[Panda, Xmate3Robotiq, Fetch]
 
     # set some commonly used values
-    goal_radius = 0.005
+    goal_radius = 0.01
     cube_half_size = 0.02
     side_half_size = cube_half_size/8
-    block_half_size = [side_half_size, 2*side_half_size+2*cube_half_size, 2*side_half_size+2*cube_half_size] # the block of the bin
+    block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
+    edge_block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size] # the block of the bin
         
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         # specifying robot_uids="panda" as the default means gym.make("PushCube-v1") will default to using the panda arm.
@@ -77,7 +78,7 @@ class PutSphereIntoBinEnv(BaseEnv):
     def _default_sensor_configs(self):
         # registers one 128x128 camera looking at the robot, cube, and target
         # a smaller sized camera will be lower quality, but render faster
-        pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
+        pose = sapien_utils.look_at(eye=[0.3, 0, 0.2], target=[-0.1, 0, 0])
         return [
             CameraConfig(
                 "base_camera",
@@ -93,7 +94,7 @@ class PutSphereIntoBinEnv(BaseEnv):
     @property
     def _default_human_render_camera_configs(self):
         # registers a more high-definition (512x512) camera used just for rendering when render_mode="rgb_array" or calling env.render_rgb_array()
-        pose = sapien_utils.look_at([0.6, -0.2, 0.2], [0.0, 0.0, 0.35])
+        pose = sapien_utils.look_at([0.6, -0.2, 0.2], [0.0, 0.0, 0.2])
         return CameraConfig(
             "render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100
         )
@@ -104,9 +105,9 @@ class PutSphereIntoBinEnv(BaseEnv):
         # init the basic block: with x-axis length small and other-axis length larger
         dx = self.block_half_size[1] - self.block_half_size[0] 
         dy = self.block_half_size[1] - self.block_half_size[0] 
-        dz = self.block_half_size[1] + self.block_half_size[0]
+        dz = self.edge_block_half_size[2] + self.block_half_size[0]
 
-	# build bin blocks
+	      # build bin blocks
         poses = [
             sapien.Pose([0, 0, 0]),
             sapien.Pose([-dx, 0, dz]),
@@ -116,16 +117,16 @@ class PutSphereIntoBinEnv(BaseEnv):
         ]
         half_sizes = [
             [self.block_half_size[1], self.block_half_size[2], self.block_half_size[0]],
-            self.block_half_size,
-            self.block_half_size,
-            [self.block_half_size[1], self.block_half_size[0], self.block_half_size[2]],
-            [self.block_half_size[1], self.block_half_size[0], self.block_half_size[2]],
+            self.edge_block_half_size,
+            self.edge_block_half_size,
+            [self.edge_block_half_size[1], self.edge_block_half_size[0], self.edge_block_half_size[2]],
+            [self.edge_block_half_size[1], self.edge_block_half_size[0], self.edge_block_half_size[2]],
         ]
         for pose, half_size in zip(poses, half_sizes):
             builder.add_box_collision(pose, half_size)
             builder.add_box_visual(pose, half_size)
 
-	# build the kinematic bin which is not collidable
+      	# build the kinematic bin which is not collidable
         return builder.build_kinematic(name="bin")
 
 
@@ -183,8 +184,8 @@ class PutSphereIntoBinEnv(BaseEnv):
             # init the cube in the first 1/4 zone (so that it doesn't collide the bin)
             xyz = torch.zeros((b, 3))
             # print(f"xyz.shape is {xyz.shape, xyz[..., 0].shape, (torch.rand((b, 1)) * 0.1 - 0.2).shape}")
-            xyz[..., 0] = (torch.zeros((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
-            xyz[..., 1] = (torch.zeros((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
+            xyz[..., 0] = (torch.rand((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
+            xyz[..., 1] = (torch.rand((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
             xyz[..., 2] = self.cube_half_size # on the table
             q = [1, 0, 0, 0]
             obj_pose = Pose.create_from_pq(p=xyz, q=q)
@@ -192,8 +193,8 @@ class PutSphereIntoBinEnv(BaseEnv):
 
             # init the bin in the last 1/2 zone (so that it doesn't collide the cube)
             pos = torch.zeros((b, 3))
-            pos[:, 0] = torch.zeros((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
-            pos[:, 1] = torch.zeros((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
+            pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
+            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
             q = [1, 0, 0, 0]
             bin_pose = Pose.create_from_pq(p=pos, q=q)
@@ -206,27 +207,50 @@ class PutSphereIntoBinEnv(BaseEnv):
             self.goal_site.set_pose(goal_pose)
 
 
-    def evaluate(self):
+    def __evaluate(self):
         is_obj_placed = (
             torch.linalg.norm(
                 self.obj.pose.p - self.goal_site.pose.p, axis=1
             )
             < self.goal_radius
         )
+        obj_bin_diff = self.obj.pose.p - self.bin.pose.p
+        # is_obj_on_bin_top = (torch.linalg.norm(obj_bin_diff[:, :2], axis=1) < 0.005)
+        # is_obj_on_bin_top.logical_and((obj_bin_diff[:, 2] - self.cube_half_size - self.block_half_size[0]) < 0.001)
         is_robot_static = self.agent.is_static(0.2)
         is_grasped = self.agent.is_grasping(self.obj)
 
         return {
-            "success": is_obj_placed & is_robot_static,
+            "success": is_obj_placed & is_robot_static & ~is_grasped,
             "is_obj_placed": is_obj_placed,
             "is_robot_static": is_robot_static,
             "is_grasped": is_grasped
         }
 
+    def evaluate(self):
+        pos_obj = self.obj.pose.p
+        pos_bin = self.bin.pose.p
+        offset = pos_obj - pos_bin
+        xy_flag = (
+            torch.linalg.norm(offset[..., :2], axis=1)
+            <= 0.005
+        )
+        z_flag = torch.abs(offset[..., 2] - self.cube_half_size - self.block_half_size[0]) <= 0.005
+        is_cube_on_bin = torch.logical_and(xy_flag, z_flag)
+        is_cube_static = self.obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        is_cube_grasped = self.agent.is_grasping(self.obj)
+        success = is_cube_on_bin * is_cube_static * (~is_cube_grasped)
+        return {
+            "is_cube_grasped": is_cube_grasped,
+            "is_cube_on_bin": is_cube_on_bin,
+            "is_cube_static": is_cube_static,
+            "success": success.bool(),
+        }
+
     def _get_obs_extra(self, info: Dict):
         # tcp: (tool center point) which is the point between the grippers of the robot
         obs = dict(
-            is_grasped=info["is_grasped"],
+            is_grasped=info["is_cube_grasped"],
             tcp_pose=self.agent.tcp.pose.raw_pose,
             goal_pos=self.goal_site.pose.p,
             bin_pos=self.bin.pose.p
@@ -239,23 +263,54 @@ class PutSphereIntoBinEnv(BaseEnv):
             )
         return obs
 
-
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+        # reaching reward
+        tcp_pose = self.agent.tcp.pose.p
+        cube_pos = self.obj.pose.p
+        cube_to_tcp_dist = torch.linalg.norm(tcp_pose - cube_pos, axis=1)
+        reward = 2 * (1 - torch.tanh(5 * cube_to_tcp_dist))
+
+        # grasp and place reward
+        cube_pos = self.obj.pose.p
+        bin_pos = self.bin.pose.p
+        goal_xyz = self.goal_site.pose.p
+        cube_to_goal_dist = torch.linalg.norm(goal_xyz - cube_pos, axis=1)
+        place_reward = 1 - torch.tanh(5.0 * cube_to_goal_dist)
+
+        reward[info["is_cube_grasped"]] = (4 + place_reward)[info["is_cube_grasped"]]
+
+        # ungrasp and static reward
+        gripper_width = (self.agent.robot.get_qlimits()[0, -1, 1] * 2).to(
+            self.device
+        )  # NOTE: hard-coded with panda
+        is_cube_grasped = info["is_cube_grasped"]
+        ungrasp_reward = (
+            torch.sum(self.agent.robot.get_qpos()[:, -2:], axis=1) / gripper_width
+        )
+        ungrasp_reward[~is_cube_grasped] = 1.0
+        v = torch.linalg.norm(self.obj.linear_velocity, axis=1)
+        av = torch.linalg.norm(self.obj.angular_velocity, axis=1)
+        static_reward = 1 - torch.tanh(v * 10 + av)
+        reward[info["is_cube_on_bin"]] = (
+            6 + (ungrasp_reward + static_reward) / 2.0
+        )[info["is_cube_on_bin"]]
+
+        reward[info["success"]] = 8
+
+        return reward
+
+    def _compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
         # reaching reward
         cube_to_tcp_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.obj.pose.p, axis=1)
         reward = 2 * (1 - torch.tanh(5 * cube_to_tcp_dist))
 
-        # grasp and reach top reward 
-        bin_top_pos_p = self.goal_site.pose.p.clone()
-        bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + self.block_half_size[1]*3
-        cube_to_bin_top_dist = torch.linalg.norm(bin_top_pos_p - self.obj.pose.p, axis=1)  
+        # grasp and reach bin reward 
+        cube_to_bin_top_dist = torch.linalg.norm(self.goal_site.pose.p - self.obj.pose.p, axis=1)  
         place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_dist)
 
         reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
 
         # ungrasp and static reward
-        cube_to_bin_top_dist_xy = torch.linalg.norm(bin_top_pos_p[..., :2] - self.obj.pose.p[..., :2], axis=1)  
-        is_on_top = (cube_to_bin_top_dist_xy < 0.01)          
         gripper_width = (self.agent.robot.get_qlimits()[0, -1, 1] * 2).to(
             self.device
         )  # NOTE: hard-coded with panda
@@ -267,9 +322,9 @@ class PutSphereIntoBinEnv(BaseEnv):
             5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
         )
 
-        reward[is_on_top] = (
+        reward[info["is_obj_placed"]] = (
             6 + (ungrasp_reward + static_reward) / 2.0
-        )[is_on_top]
+        )[info["is_obj_placed"]]
 
         # if is_on_top:
         #   print(f"sphere on the top {is_on_top, info['success']}")
@@ -381,6 +436,7 @@ if __name__ == "__main__":
     #img = np.squeeze(img)
     #plt.imshow(img)
     #plt.show()
+
 
 
 

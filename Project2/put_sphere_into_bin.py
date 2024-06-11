@@ -56,7 +56,7 @@ class PutSphereIntoBinEnv(BaseEnv):
     goal_radius = 0.005
     cube_half_size = 0.02
     side_half_size = cube_half_size/8
-    block_half_size = [side_half_size, 2*side_half_size+cube_half_size, 2*side_half_size+cube_half_size] # the block of the bin
+    block_half_size = [side_half_size, 2*side_half_size+2*cube_half_size, 2*side_half_size+2*cube_half_size] # the block of the bin
         
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         # specifying robot_uids="panda" as the default means gym.make("PushCube-v1") will default to using the panda arm.
@@ -183,8 +183,8 @@ class PutSphereIntoBinEnv(BaseEnv):
             # init the cube in the first 1/4 zone (so that it doesn't collide the bin)
             xyz = torch.zeros((b, 3))
             # print(f"xyz.shape is {xyz.shape, xyz[..., 0].shape, (torch.rand((b, 1)) * 0.1 - 0.2).shape}")
-            xyz[..., 0] = (torch.rand((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
-            xyz[..., 1] = (torch.rand((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
+            xyz[..., 0] = (torch.zeros((b, 1)) * 0.05 - 0.1)[..., 0] # first 1/4 zone of x ([-0.1, -0.05])
+            xyz[..., 1] = (torch.zeros((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
             xyz[..., 2] = self.cube_half_size # on the table
             q = [1, 0, 0, 0]
             obj_pose = Pose.create_from_pq(p=xyz, q=q)
@@ -192,8 +192,8 @@ class PutSphereIntoBinEnv(BaseEnv):
 
             # init the bin in the last 1/2 zone (so that it doesn't collide the cube)
             pos = torch.zeros((b, 3))
-            pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
-            pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
+            pos[:, 0] = torch.zeros((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
+            pos[:, 1] = torch.zeros((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
             q = [1, 0, 0, 0]
             bin_pose = Pose.create_from_pq(p=pos, q=q)
@@ -239,7 +239,50 @@ class PutSphereIntoBinEnv(BaseEnv):
             )
         return obs
 
-    def compute_dense_reward(self, obs: Any, action: Array, info: Dict):
+
+    def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+        # reaching reward
+        cube_to_tcp_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.obj.pose.p, axis=1)
+        reward = 2 * (1 - torch.tanh(5 * cube_to_tcp_dist))
+
+        # grasp and reach top reward 
+        bin_top_pos_p = self.goal_site.pose.p.clone()
+        bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + self.block_half_size[1]*3
+        cube_to_bin_top_dist = torch.linalg.norm(bin_top_pos_p - self.obj.pose.p, axis=1)  
+        place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_dist)
+
+        reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
+
+        # ungrasp and static reward
+        cube_to_bin_top_dist_xy = torch.linalg.norm(bin_top_pos_p[..., :2] - self.obj.pose.p[..., :2], axis=1)  
+        is_on_top = (cube_to_bin_top_dist_xy < 0.01)          
+        gripper_width = (self.agent.robot.get_qlimits()[0, -1, 1] * 2).to(
+            self.device
+        )  # NOTE: hard-coded with panda
+        ungrasp_reward = (
+            torch.sum(self.agent.robot.get_qpos()[:, -2:], axis=1) / gripper_width
+        )
+        ungrasp_reward[~info["is_grasped"]] = 1.0
+        static_reward = 1 - torch.tanh(
+            5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
+        )
+
+        reward[is_on_top] = (
+            6 + (ungrasp_reward + static_reward) / 2.0
+        )[is_on_top]
+
+        # if is_on_top:
+        #   print(f"sphere on the top {is_on_top, info['success']}")
+        #   print(f"ung rw to update {6 + (ungrasp_reward + static_reward) / 2.0}")
+        #   print(f"assigned rw {reward[is_on_top]}")
+        
+        # success reward
+        reward[info["success"]] = 8
+
+        return reward
+
+
+    def __compute_dense_reward(self, obs: Any, action: Array, info: Dict):
         reward = 0
         # reaching object reward
         tcp_to_obj_dist = torch.linalg.norm(
@@ -324,7 +367,7 @@ class PutSphereIntoBinEnv(BaseEnv):
 
     def compute_normalized_dense_reward(self, obs: Any, action: Array, info: Dict):
         # this should be equal to compute_dense_reward / max possible reward
-        max_reward = 9.0
+        max_reward = 8.0
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
 
@@ -338,6 +381,7 @@ if __name__ == "__main__":
     #img = np.squeeze(img)
     #plt.imshow(img)
     #plt.show()
+
 
 
 

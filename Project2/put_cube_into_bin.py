@@ -187,6 +187,7 @@ class PutCubeIntoBinEnv(BaseEnv):
             xyz[..., 1] = (torch.rand((b, 1)) * 0.2 - 0.1)[..., 0] # spanning all possible ys
             xyz[..., 2] = self.cube_half_size # on the table
             q = [1, 0, 0, 0]
+            # initialize all equivalent poses
             obj_pose = Pose.create_from_pq(p=xyz, q=q)
             self.obj.set_pose(obj_pose)
 
@@ -195,7 +196,6 @@ class PutCubeIntoBinEnv(BaseEnv):
             pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
             pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
-            q = [1, 0, 0, 0]
             bin_pose = Pose.create_from_pq(p=pos, q=q)
             self.bin.set_pose(bin_pose)
             
@@ -244,16 +244,36 @@ class PutCubeIntoBinEnv(BaseEnv):
         cube_to_tcp_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.obj.pose.p, axis=1)
         reward = 2 * (1 - torch.tanh(5 * cube_to_tcp_dist))
 
-        # grasp and reach reward 
+        # # grasp and reach top reward 
+        # bin_top_pos_p = self.goal_site.pose.p.clone()
+        # bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + self.block_half_size[1]*3
+        # cube_to_bin_top_dist = torch.linalg.norm(bin_top_pos_p - self.obj.pose.p, axis=1)  
+        # place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_dist)
+
+        # reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
+
+        # # align pose reward
+        # is_on_top = (cube_to_bin_top_dist < 0.03)
+        # bin_top_pos_q = self.goal_site.pose.q
+        # q_dist = torch.linalg.norm(bin_top_pos_q - self.obj.pose.q, axis=1) # TODO: do min-of-N loss for q
+        # align_reward = 1 - torch.tanh(5.0 * q_dist)
+        # reward[is_on_top] = (6 + align_reward)[is_on_top]
+        
+        # grasp and reach top reward 
         bin_top_pos_p = self.goal_site.pose.p.clone()
-        bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + block_half_size[1]*2
+        bin_top_pos_p[..., 2] = bin_top_pos_p[..., 2] + self.block_half_size[1]*3
         bin_top_pos_q = self.goal_site.pose.q
-        cube_to_bin_top_dist = torch.linalg.norm(bin_top_pos_q - self.obj.pose.q, axis=1) + torch.linalg.norm(bin_top_pos_p - self.obj.pose.p, axis=1) # TODO: do min-of-N loss for q
-        place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_dist)
+        p_diff = bin_top_pos_p - self.obj.pose.p
+        q_diff = bin_top_pos_q - self.obj.pose.q
+        cube_to_bin_top_pq_dist = torch.linalg.norm(p_diff, axis=1)
+        cube_to_bin_top_pq_dist += torch.linalg.norm(q_diff, axis=1)
+        place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_pq_dist)
 
         reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
 
         # ungrasp and static reward
+        is_on_top = (torch.linalg.norm(p_diff[..., :2], axis=1) < 0.02)
+        is_on_top_and_aligned = is_on_top.logical_and(torch.linalg.norm(q_diff, axis=1) < 0.01)
         gripper_width = (self.agent.robot.get_qlimits()[0, -1, 1] * 2).to(
             self.device
         )  # NOTE: hard-coded with panda
@@ -264,12 +284,12 @@ class PutCubeIntoBinEnv(BaseEnv):
         static_reward = 1 - torch.tanh(
             5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
         )
-        reward[info["is_obj_placed"]] = (
-            6 + (ungrasp_reward + static_reward) / 2.0
-        )[info["is_obj_placed"]]
+        reward[is_on_top_and_aligned] = (
+            8 + (ungrasp_reward + static_reward) / 2.0
+        )[is_on_top_and_aligned]
         
         # success reward
-        reward[info["success"]] = 8
+        reward[info["success"]] = 10
 
         return reward
 
@@ -346,3 +366,4 @@ if __name__ == "__main__":
     #img = np.squeeze(img)
     #plt.imshow(img)
     #plt.show()
+

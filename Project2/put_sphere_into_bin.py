@@ -32,8 +32,8 @@ from mani_skill.utils.structs.types import Array, GPUMemoryConfig, SimConfig
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
-@register_env("myenv-v1", max_episode_steps=50)
-class PutSphereIntoBinEnv(BaseEnv):
+@register_env("PlaceSphere-v1", max_episode_steps=50)
+class PlaceSphereIntoBinEnv(BaseEnv):
     """
     Task Description
     ----------------

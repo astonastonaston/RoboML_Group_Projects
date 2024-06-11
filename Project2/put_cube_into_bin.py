@@ -32,8 +32,8 @@ from mani_skill.utils.structs.types import Array, GPUMemoryConfig, SimConfig
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
-@register_env("myenv-v1", max_episode_steps=50)
-class PutCubeIntoBinEnv(BaseEnv):
+@register_env("PlaceCube-v1", max_episode_steps=50)
+class PlaceCubeIntoBinEnv(BaseEnv):
     """
     Task Description
     ----------------

@@ -19,7 +19,8 @@ from mani_skill.utils.wrappers.flatten import FlattenActionSpaceWrapper
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 
-from put_sphere_into_bin import PutSphereIntoBinEnv
+from put_cube_into_bin import PlaceCubeIntoBinEnv
+from put_sphere_into_bin import PlaceSphereIntoBinEnv
 
 
 
@@ -473,5 +474,6 @@ if __name__ == "__main__":
         writer.close()
     envs.close()
     eval_envs.close()
+
 
 

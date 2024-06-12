@@ -28,6 +28,7 @@ from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs import Pose
 from mani_skill.utils.structs.types import Array, GPUMemoryConfig, SimConfig
+import mani_skill.envs.utils.geometry as geometry
 
 import matplotlib.pyplot as plt
 import gymnasium as gym
@@ -143,31 +144,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
             name="cube",
             body_type="dynamic",
         )
-        # self.obj = actors.build_sphere(
-        #     self.scene,
-        #     radius=self.cube_half_size,
-        #     color=np.array([12, 42, 160, 255]) / 255,
-        #     name="sphere",
-        #     body_type="dynamic",
-        # )
-
-        self.goal_site = actors.build_cube(
-            self.scene,
-            half_size=self.cube_half_size,
-            color=[0, 1, 0, 1],
-            name="goal_site",
-            body_type="kinematic",
-            add_collision=False,
-        )
         
-        # self.goal_site = actors.build_sphere(
-        #     self.scene,
-        #     radius=self.cube_half_size,
-        #     color=[0, 1, 0, 1],
-        #     name="goal_site",
-        #     body_type="kinematic",
-        #     add_collision=False,
-        # )
         self.bin = self._build_bin(self.cube_half_size)
 
 
@@ -201,34 +178,34 @@ class PlaceCubeIntoBinEnv(BaseEnv):
                 lock_x=True,
                 lock_y=True,
                 lock_z=False,
-            )
+                bound=(0, np.pi/6)
+            ) # the rotation of the bin is limited to that of the object
+            qs_bin = geometry.quaternion_multiply(qs_obj, qs_bin)
             pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
             pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
             bin_pose = Pose.create_from_pq(p=pos, q=qs_bin)
             self.bin.set_pose(bin_pose)
-            
-            # init the goal position
-            goal_xyz = pos.clone()
-            goal_xyz[:, 2] = goal_xyz[:, 2] + self.block_half_size[0] + self.cube_half_size
-            goal_pose = Pose.create_from_pq(p=goal_xyz, q=qs_bin)
-            self.goal_site.set_pose(goal_pose)
 
 
     def evaluate(self):
-
-        p_diff = self.goal_site.pose.p - self.obj.pose.p
-        q_diff = self.goal_site.pose.q - self.obj.pose.q
-        is_obj_placed = (torch.linalg.norm(p_diff[..., :2], axis=1) < 0.01)
-        is_obj_placed = is_obj_placed.logical_and(torch.linalg.norm(q_diff, axis=1) < 0.01)
+        goal_site_p = self.bin.pose.p
+        goal_site_p[:, 2] = goal_site_p[:, 2] + self.block_half_size[0] + self.cube_half_size
+        goal_site_q = self.bin.pose.q
+        p_diff = goal_site_p - self.obj.pose.p
+        q_diff = goal_site_q - self.obj.pose.q
+        is_p_aligned = (torch.linalg.norm(p_diff[..., :2], axis=1) < 0.01)
+        is_q_aligned = (torch.linalg.norm(q_diff, axis=1) < 0.01)
+        is_obj_placed = is_p_aligned.logical_and(is_q_aligned)
 
         is_robot_static = self.agent.is_static(0.2)
+        is_obj_static = self.obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
         is_grasped = self.agent.is_grasping(self.obj)
         
-        
         return {
-            "success": is_obj_placed & is_robot_static & ~is_grasped,
+            "success": is_obj_placed & is_obj_static & is_robot_static & ~is_grasped,
             "is_obj_placed": is_obj_placed,
+            "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
             "is_grasped": is_grasped
         }
@@ -238,14 +215,12 @@ class PlaceCubeIntoBinEnv(BaseEnv):
         obs = dict(
             is_grasped=info["is_grasped"],
             tcp_pose=self.agent.tcp.pose.raw_pose,
-            goal_pos=self.goal_site.pose.p,
             bin_pos=self.bin.pose.p
         )
         if "state" in self.obs_mode:
             obs.update(
                 obj_pose=self.obj.pose.raw_pose,
                 tcp_to_obj_pos=self.obj.pose.p - self.agent.tcp.pose.p,
-                obj_to_goal_pos=self.goal_site.pose.p - self.obj.pose.p,
             )
         return obs
 
@@ -285,7 +260,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
         ungrasp_reward = (
             torch.sum(self.agent.robot.get_qpos()[:, -2:], axis=1) / gripper_width
         )
-        ungrasp_reward[~info["is_grasped"]] = 1.0
+        ungrasp_reward[~info["is_grasped"]] = 11.0
         static_reward = 1 - torch.tanh(
             5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
         )
@@ -294,70 +269,13 @@ class PlaceCubeIntoBinEnv(BaseEnv):
         )[info["is_obj_placed"]]
         
         # success reward
-        reward[info["success"]] = 10
+        reward[info["success"]] = 15
 
-        return reward
-
-    def __compute_dense_reward(self, obs: Any, action: Array, info: Dict):
-        # reaching object reward
-        tcp_to_obj_dist = torch.linalg.norm(
-            self.obj.pose.p - self.agent.tcp.pose.p, axis=1
-        )
-        reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-        # print(f"reaching rw {reaching_reward}")
-        reward = reaching_reward
-
-        # grasping reward
-        is_grasped = info["is_grasped"]
-        # print(f"grasping rw {is_grasped}")
-        reward += is_grasped
-
-        # reaching the bin top reward (use the xy distance / angle approx pi/2 rewards)
-        obj_to_goal_diff = self.obj.pose.p - self.goal_site.pose.p
-        obj_to_goal_q_diff = self.obj.pose.q - self.goal_site.pose.q
-        obj_to_goal_dist_xy = torch.linalg.norm(obj_to_goal_diff[:, :2], axis=1)
-        obj_to_goal_dist_q = torch.linalg.norm(obj_to_goal_q_diff, axis=1)
-        # move_top_reward = 1 - torch.tanh(5 * obj_to_goal_dist_xy)
-        # print(f"top moving rw {move_top_reward * is_grasped}")
-        # reward += move_top_reward * is_grasped
-        
-        obj_to_goal_dist_xyz = torch.linalg.norm(obj_to_goal_diff, axis=1)
-        b, v = obj_to_goal_diff.shape
-        # print(obj_to_goal_diff.shape)
-        z_unit = torch.tensor([[0, 0, 1]]*b, device=torch.device('cuda:0')).view(b, v, 1)
-        # print(z_unit.shape)
-        # print(obj_to_goal_dist_xyz.shape)
-        cosine_diff_z = torch.bmm(obj_to_goal_diff.view(b, 1, v).float(), z_unit.float()).view(b) / obj_to_goal_dist_xyz
-        # print(cosine_diff_z.shape)
-        # print(is_grasped.shape)
-        # cosine_diff_z.view(8, 1)
-        move_top_reward = cosine_diff_z # theta approaching 90 degrees
-        move_top_reward = move_top_reward + 1 - torch.tanh(5 * obj_to_goal_dist_xy) # get closed to the bin
-        pose_align_reward = obj_to_goal_dist_q
-        # print(move_top_reward.shape, is_grasped.view(8, 1).shape, move_top_reward * is_grasped.view(8, 1), reward.shape)
-        reward += ((move_top_reward + pose_align_reward) * is_grasped)
-        
-        # release cube reward (TODO)
-        is_cube_on_top = ((obj_to_goal_dist_xy < 1e-9).logical_and(obj_to_goal_dist_q < 1e-9))
-        is_released = torch.logical_not(is_grasped)
-        # print(f"cube top rw {is_cube_on_top * is_released * 2}") 
-        # print(f"cube top rw {(is_cube_on_top * is_released * 2).shape}") 
-        reward += is_cube_on_top * is_released * 2
-        
-        # static end state keeping reward
-        static_reward = 1 - torch.tanh(
-            5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
-        )
-        # print(f"static robot rw {static_reward * info['is_obj_placed']}")
-        reward += static_reward * info["is_obj_placed"]
-        
-        # success reward
-        reward[info["success"]] = 7
         return reward
 
     def compute_normalized_dense_reward(self, obs: Any, action: Array, info: Dict):
         # this should be equal to compute_dense_reward / max possible reward
-        max_reward = 7.0
+        max_reward = 15.0
         return self.compute_dense_reward(obs=obs, action=action, info=info) / max_reward
 
 

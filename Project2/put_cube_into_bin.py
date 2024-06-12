@@ -206,7 +206,9 @@ class PlaceCubeIntoBinEnv(BaseEnv):
             "is_obj_placed": is_obj_placed,
             "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
-            "is_grasped": is_grasped
+            "is_grasped": is_grasped,
+            "p_diff": p_diff,
+            "q_diff": q_diff
         }
 
     def _get_obs_extra(self, info: Dict):
@@ -244,12 +246,11 @@ class PlaceCubeIntoBinEnv(BaseEnv):
         # reward[is_on_top] = (6 + align_reward)[is_on_top]
         
         # grasp and reach reward 
-        p_diff = self.goal_site.pose.p - self.obj.pose.p
-        q_diff = self.goal_site.pose.q - self.obj.pose.q
+        p_diff = info["p_diff"] # p-difference vector to goal site
+        q_diff = info["q_diff"] # q-difference vector to goal site
         cube_to_bin_top_pq_dist = torch.linalg.norm(p_diff, axis=1)
         cube_to_bin_top_pq_dist += torch.linalg.norm(q_diff, axis=1)
         place_reward = 1 - torch.tanh(5.0 * cube_to_bin_top_pq_dist)
-
         reward[info["is_grasped"]] = (4 + place_reward)[info["is_grasped"]]
 
         # ungrasp and static reward

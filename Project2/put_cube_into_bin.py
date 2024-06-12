@@ -28,8 +28,7 @@ from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs import Pose
 from mani_skill.utils.structs.types import Array, GPUMemoryConfig, SimConfig
-import mani_skill.envs.utils.geometry as geometry
-
+from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply
 import matplotlib.pyplot as plt
 import gymnasium as gym
 
@@ -78,7 +77,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
     def _default_sensor_configs(self):
         # registers one 128x128 camera looking at the robot, cube, and target
         # a smaller sized camera will be lower quality, but render faster
-        pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
+        pose = sapien_utils.look_at(eye=[0.3, 0.3, 0.3], target=[0.0, 0.0, 0.1])
         return [
             CameraConfig(
                 "base_camera",
@@ -94,7 +93,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
     @property
     def _default_human_render_camera_configs(self):
         # registers a more high-definition (512x512) camera used just for rendering when render_mode="rgb_array" or calling env.render_rgb_array()
-        pose = sapien_utils.look_at([0.6, -0.2, 0.2], [0.0, 0.0, 0.35])
+        pose = sapien_utils.look_at([0.3, 0.3, 0.3], [0.0, 0.0, 0.1])
         return CameraConfig(
             "render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100
         )
@@ -178,9 +177,9 @@ class PlaceCubeIntoBinEnv(BaseEnv):
                 lock_x=True,
                 lock_y=True,
                 lock_z=False,
-                bound=(0, np.pi/6)
+                bounds=(0, np.pi/6)
             ) # the rotation of the bin is limited to that of the object
-            qs_bin = geometry.quaternion_multiply(qs_obj, qs_bin)
+            qs_bin = quaternion_multiply(qs_obj, qs_bin)
             pos[:, 0] = torch.rand((b, 1))[..., 0] * 0.1 # the last 1/2 zone of x ([0, 0.1])
             pos[:, 1] = torch.rand((b, 1))[..., 0] * 0.2 - 0.1 # spanning all possible ys
             pos[:, 2] = self.block_half_size[0] # on the table
@@ -281,7 +280,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
 
 
 if __name__ == "__main__":
-    env = gym.make(id="myenv-v1", render_mode="sensors")
+    env = gym.make(id="PlaceCube-v1", render_mode="sensors")
     env.reset()
     while True:
     	env.render_human()

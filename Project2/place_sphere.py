@@ -42,11 +42,14 @@ class PlaceSphereEnv(BaseEnv):
     agent: Union[Panda, Xmate3Robotiq, Fetch]
 
     # set some commonly used values
-    radius = 0.02 # radius of the sphere
-    side_half_size = radius/8 # length of the shortest edge of the block
-    block_half_size = [side_half_size, 2*side_half_size+radius, 2*side_half_size+radius] # The bottom block of the bin, which is larger: The list represents the half length of the block along the [x, y, z] axis respectively.
-    edge_block_half_size = [side_half_size, 2*side_half_size+radius, 2*side_half_size] # The edge block of the bin, which is smaller. The representations are similar to the above one
-        
+    dist_func = "l1norm" # the distance function used. By default using the l1 norm
+    dist_rw_mode = "sigmoid" # mode for computing the distance reward. By default using the tanh function
+    radius = 0.015 # radius of the sphere
+    inner_side_half_len = 0.02 # side length of the bin's inner square
+    side_half_size = 0.0025 # length of the shortest edge of the block
+    block_half_size = [side_half_size, 2*side_half_size+inner_side_half_len, 2*side_half_size+inner_side_half_len] # The bottom block of the bin, which is larger: The list represents the half length of the block along the [x, y, z] axis respectively.
+    edge_block_half_size = [side_half_size, 2*side_half_size+inner_side_half_len, 2*side_half_size] # The edge block of the bin, which is smaller. The representations are similar to the above one
+    
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
@@ -167,6 +170,9 @@ class PlaceSphereEnv(BaseEnv):
         is_obj_static = self.obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
         is_obj_grasped = self.agent.is_grasping(self.obj)
         success = is_obj_on_bin * is_obj_static * (~is_obj_grasped)
+        # if is_obj_on_bin:
+        #   print(f"success conds {is_obj_on_bin}, {is_obj_static}, {(~is_obj_grasped)}")
+        #   print(f"success flag {success}")
         return {
             "is_obj_grasped": is_obj_grasped,
             "is_obj_on_bin": is_obj_on_bin,
@@ -187,20 +193,41 @@ class PlaceSphereEnv(BaseEnv):
             )
         return obs
 
+    def sigmoid(self, x):
+      return 1/(1+torch.exp(-x))
+
+    def dist_activation(self, x, mode="tanh", scale=1):
+      # a function mapping a distance to a normalized reward value
+      if mode == "tanh":
+        return scale * (1 - torch.tanh(5 * x))
+      elif mode == "sigmoid":
+        return scale * (1 - self.sigmoid(5 * x))
+      else:
+        raise NotImplementedError
+
+    def dist(self, x, y, mode="l1norm"):
+      # compute the distance between batched x any y positions
+      if mode == "l1norm":
+        return torch.linalg.norm(x - y, axis=1)
+      elif mode == "manhattan":
+        return torch.sum(torch.abs(x - y), axis=1)
+      else:
+        raise NotImplementedError
+
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
         # reaching reward
         tcp_pose = self.agent.tcp.pose.p
         obj_pos = self.obj.pose.p
-        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
-        reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
+        obj_to_tcp_dist = self.dist(tcp_pose, obj_pos, mode=self.dist_func)
+        reward = self.dist_activation(obj_to_tcp_dist, scale=2, mode=self.dist_rw_mode)
 
         # grasp and place reward
         obj_pos = self.obj.pose.p
         bin_pos = self.bin.pose.p
         bin_top_pos = self.bin.pose.p.clone()
         bin_top_pos[:, 2] = bin_top_pos[:, 2] + self.block_half_size[0] + self.radius
-        obj_to_bin_top_dist = torch.linalg.norm(bin_top_pos - obj_pos, axis=1)
-        place_reward = 1 - torch.tanh(5.0 * obj_to_bin_top_dist)
+        obj_to_bin_top_dist = self.dist(bin_top_pos, obj_pos, mode=self.dist_func)
+        place_reward = self.dist_activation(obj_to_bin_top_dist, mode=self.dist_rw_mode)
         reward[info["is_obj_grasped"]] = (4 + place_reward)[info["is_obj_grasped"]]
 
         # ungrasp and static reward
@@ -236,6 +263,7 @@ if __name__ == "__main__":
     env.reset()
     while True:
     	env.render_human()
+
 
 
 

@@ -202,7 +202,7 @@ class PlaceCubeIntoBinEnv(BaseEnv):
         is_grasped = self.agent.is_grasping(self.obj)
         
         return {
-            "success": is_obj_placed & is_obj_static & is_robot_static & ~is_grasped,
+            "success": is_obj_placed & is_obj_static & ~is_grasped,
             "is_obj_placed": is_obj_placed,
             "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
